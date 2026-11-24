@@ -11,14 +11,12 @@ class EcdhSessionService
     private const HKDF_INFO = 'm3-payment-session-v1';
     private const SESSION_TTL_SECONDS = 300; // 5 minutos
 
-    /**
-     * Fase 1: Genera par efímero ECDH P-256 en el servidor y guarda la llave privada en caché.
-     */
+
     public function createSession(string $buyerId, string $reservationId): array
     {
         $config = [
             'private_key_type' => OPENSSL_KEYTYPE_EC,
-            'curve_name' => 'prime256v1', // Equivalente a P-256 / secp256r1
+            'curve_name' => 'prime256v1',
         ];
 
         $opensslConf = env('OPENSSL_CONF');
@@ -38,7 +36,6 @@ class EcdhSessionService
         $details = openssl_pkey_get_details($res);
         $publicKeyPem = $details['key'];
 
-        // Convertimos PEM a SPKI Base64 puro para que Web Crypto API lo importe directo
         $publicKeySpkiBase64 = $this->pemToSpkiBase64($publicKeyPem);
 
         $sessionId = 'ecdh_' . Str::ulid();
@@ -61,10 +58,7 @@ class EcdhSessionService
         ];
     }
 
-    /**
-     * Fase 3: Deriva el secreto compartido ECDH + HKDF-SHA256, descifra AES-256-GCM
-     * y destruye la llave privada efímera de la memoria/caché.
-     */
+
     public function decryptOrderMetadata(
         string $sessionId,
         string $clientPublicKeySpkiBase64,
@@ -82,7 +76,6 @@ class EcdhSessionService
             throw new Exception('La sesión criptográfica no pertenece al comprador autenticado.');
         }
 
-        // Destruimos la llave efímera inmediatamente (un solo uso / Perfect Forward Secrecy)
         $this->destroySession($sessionId);
 
         $serverPrivateKey = openssl_pkey_get_private($session['private_key_pem']);
@@ -93,17 +86,14 @@ class EcdhSessionService
             throw new Exception('Llaves ECDH inválidas para derivación.');
         }
 
-        // 1. Secreto compartido ECDH (32 bytes para P-256)
         $sharedSecret = openssl_pkey_derive($clientPublicKey, $serverPrivateKey, 32);
         if ($sharedSecret === false) {
             throw new Exception('Error al derivar el secreto compartido ECDH.');
         }
 
-        // 2. Derivación HKDF-SHA256 -> Llave AES-256 (32 bytes)
         $salt = base64_decode($session['salt'], true);
         $aesKey = hash_hkdf('sha256', $sharedSecret, 32, self::HKDF_INFO, $salt);
 
-        // 3. Descifrado autenticado AES-256-GCM
         $iv = base64_decode($ivBase64, true);
         $combined = base64_decode($ciphertextBase64, true);
 
@@ -111,7 +101,6 @@ class EcdhSessionService
             throw new Exception('Formato de IV o texto cifrado AES-GCM inválido.');
         }
 
-        // Web Crypto concatena el Auth Tag de 16 bytes al final del ciphertext
         $tag = substr($combined, -16);
         $ciphertext = substr($combined, 0, -16);
 

@@ -23,10 +23,7 @@ class PaymentController extends Controller
         private readonly EcdhSessionService $ecdhService
     ) {}
 
-    /**
-     * Fase 1: Handshake ECDH P-256
-     * POST /api/pagos/sesion
-     */
+
     public function createSession(Request $request): JsonResponse
     {
         $request->validate([
@@ -65,10 +62,7 @@ class PaymentController extends Controller
         }
     }
 
-    /**
-     * Fase 3: Descifrado AES-256-GCM + Creación de Orden y PaymentIntent en Stripe
-     * POST /api/pagos/intentos
-     */
+
     public function createIntent(Request $request): JsonResponse
     {
         $request->validate([
@@ -82,7 +76,6 @@ class PaymentController extends Controller
             $claims = $this->m1Auth->validateBuyerToken($request->header('Authorization'));
             $buyerId = $claims['sub'];
 
-            // Descifra metadatos de la orden y destruye la llave privada efímera del servidor
             $decrypted = $this->ecdhService->decryptOrderMetadata(
                 $request->string('sessionId')->toString(),
                 $request->string('clientPublicKey')->toString(),
@@ -94,7 +87,6 @@ class PaymentController extends Controller
             $metadata = $decrypted['metadata'];
             $reservationId = $decrypted['reservation_id'];
 
-            // El monto oficial SIEMPRE se calcula en servidor consultando a M2
             $reservation = $this->m2Booking->getActiveReservation($reservationId, $buyerId);
 
             $orderId = 'ord_' . Str::ulid();
@@ -161,4 +153,4 @@ class PaymentController extends Controller
             ], 400);
         }
     }
-}   
+}

@@ -22,10 +22,7 @@ class StripeWebhookController extends Controller
         private readonly M4TicketService $m4Ticket
     ) {}
 
-    /**
-     * Fase 4: Recepción de Webhook firmado (HMAC-SHA256) e idempotencia
-     * POST /api/pagos/webhook
-     */
+
     public function handle(Request $request): JsonResponse
     {
         $payload = $request->getContent();
@@ -40,7 +37,6 @@ class StripeWebhookController extends Controller
             return response()->json(['error' => 'Firma HMAC-SHA256 inválida'], 400);
         }
 
-        // Control de idempotencia: si este stripe_event_id ya se procesó, respondemos 200 sin duplicar
         $existingEvent = EventoWebhook::where('stripe_event_id', $event->id)->first();
         if ($existingEvent && $existingEvent->processed) {
             return response()->json(['status' => 'already_processed'], 200);
@@ -103,7 +99,6 @@ class StripeWebhookController extends Controller
             ]);
         });
 
-        // Dispara contrato JSON hacia Módulo 4 (Emisión de Boletos)
         $this->m4Ticket->notifyPaymentConfirmed([
             'paymentId' => $transaccion->id,
             'orderId' => $orden->id,
@@ -143,7 +138,6 @@ class StripeWebhookController extends Controller
             ]);
         });
 
-        // Dispara contrato JSON hacia Módulo 2 (Liberación de asiento)
         $this->m2Booking->notifyPaymentFailedOrExpired([
             'paymentId' => $transaccion->id,
             'orderId' => $orden->id,

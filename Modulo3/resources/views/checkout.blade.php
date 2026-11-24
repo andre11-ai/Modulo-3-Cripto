@@ -22,7 +22,6 @@
         </header>
 
         <main class="checkout-grid">
-            <!-- Columna Izquierda: Resumen de Orden y Estado Criptográfico -->
             <section class="card summary-card">
                 <div class="card-header">
                     <p class="eyebrow">Resumen de tu reserva</p>
@@ -60,14 +59,12 @@
                 </div>
             </section>
 
-            <!-- Columna Derecha: Datos del Comprador y Tarjeta -->
             <section class="card payment-card">
                 <h2>Finalizar compra</h2>
                 <p class="subtitle">
                     Tus metadatos viajan cifrados punto a punto. Los datos de tu tarjeta se envían directo a Stripe sin pasar por nuestro servidor.
                 </p>
 
-                <!-- Paso A: Correo del comprador para iniciar túnel cifrado -->
                 <form id="metadata-form" class="form-block">
                     <div class="input-group">
                         <label for="buyer-email">Correo electrónico para recibir tu boleto</label>
@@ -85,7 +82,6 @@
                     </button>
                 </form>
 
-                <!-- Paso B: Stripe Payment Element (se muestra tras crear el PaymentIntent) -->
                 <form id="stripe-form" class="form-block hidden">
                     <div id="payment-element"></div>
                     <button type="submit" id="btn-confirm-payment" class="btn-primary">

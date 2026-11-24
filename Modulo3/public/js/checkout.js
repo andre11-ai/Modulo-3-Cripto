@@ -10,7 +10,6 @@ document.addEventListener('DOMContentLoaded', () => {
     let stripe = null;
     let elements = null;
 
-    // Helpers Base64 <-> ArrayBuffer
     function base64ToArrayBuffer(base64) {
         const binary = window.atob(base64);
         const bytes = new Uint8Array(binary.length);
@@ -48,7 +47,6 @@ document.addEventListener('DOMContentLoaded', () => {
         }).format(amountMinor / 100);
     }
 
-    // Fase 1: Handshake ECDH P-256 al cargar la página
     async function initEcdhSession() {
         try {
             const response = await fetch(`${config.apiBase}/sesion`, {
@@ -70,7 +68,6 @@ document.addEventListener('DOMContentLoaded', () => {
 
             ecdhSession = data.session;
 
-            // Renderizar resumen oficial devuelto por el servidor
             const summary = data.reservationSummary;
             document.getElementById('event-name').textContent = summary.eventName;
             document.getElementById('event-venue').textContent = summary.venue;
@@ -89,7 +86,6 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     }
 
-    // Fase 2: Derivación HKDF-SHA256 + Cifrado AES-256-GCM en Web Crypto API
     async function encryptMetadata(metadataObj) {
         const clientKeyPair = await window.crypto.subtle.generateKey(
             { name: 'ECDH', namedCurve: 'P-256' },
@@ -153,7 +149,6 @@ document.addEventListener('DOMContentLoaded', () => {
         };
     }
 
-    // Fase 3: Enviar metadatos cifrados y montar Stripe Payment Element
     metadataForm.addEventListener('submit', async (e) => {
         e.preventDefault();
         if (!ecdhSession) return;
@@ -225,7 +220,6 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     });
 
-    // Fase 4: Enviar tarjeta directo a Stripe (PCI-DSS)
     stripeForm.addEventListener('submit', async (e) => {
         e.preventDefault();
         if (!stripe || !elements) return;
@@ -245,7 +239,7 @@ document.addEventListener('DOMContentLoaded', () => {
             btnConfirm.textContent = 'Pagar ahora';
         } else if (paymentIntent && paymentIntent.status === 'succeeded') {
             showMessage(
-                `¡Pago aprobado en Stripe! (${paymentIntent.id}). El Webhook confirmará tu orden y disparará la emisión del boleto al Módulo 4.`,
+                `¡Pago aprobado en Stripe! (${paymentIntent.id}). El Webhook confirmará tu orden.`,
                 'success'
             );
             btnConfirm.textContent = 'Pago completado';
@@ -253,4 +247,4 @@ document.addEventListener('DOMContentLoaded', () => {
     });
 
     initEcdhSession();
-});     
+});

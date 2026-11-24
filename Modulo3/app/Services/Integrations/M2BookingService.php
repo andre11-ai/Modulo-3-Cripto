@@ -15,7 +15,7 @@ class M2BookingService
                 'reservationId' => $reservationId,
                 'buyerId' => $buyerId,
                 'status' => 'LOCKED',
-                'amountMinor' => 125000, // $1,250.00 MXN
+                'amountMinor' => 125000, 
                 'currency' => 'MXN',
                 'eventId' => 'evt_2026_001',
                 'seatId' => 'A-12',
@@ -49,7 +49,7 @@ class M2BookingService
                 'reservationId' => $data['reservationId'],
                 'eventId' => $data['eventId'],
                 'seatId' => $data['seatId'],
-                'paymentStatus' => $data['paymentStatus'], // FAILED o EXPIRED
+                'paymentStatus' => $data['paymentStatus'],
                 'failureReason' => $data['failureReason'],
                 'occurredAt' => now()->utc()->toIso8601String(),
             ],
