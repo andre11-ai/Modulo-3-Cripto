@@ -1,5 +1,6 @@
 <?php
 
+use App\Models\MockAsiento;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Route;
 
@@ -8,8 +9,11 @@ Route::get('/', function () {
 });
 
 Route::get('/checkout', function (Request $request) {
+    $asientos = MockAsiento::orderBy('seat_id')->get();
+
     return view('checkout', [
         'stripeKey' => config('modulo3.stripe.key'),
-        'reservationId' => $request->query('reservation_id', 'res_778899'),
+        'seatId' => $request->query('seat', 'A-12'),
+        'asientos' => $asientos,
     ]);
 })->name('checkout.show');

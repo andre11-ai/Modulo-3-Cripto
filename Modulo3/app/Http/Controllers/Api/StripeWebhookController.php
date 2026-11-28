@@ -99,6 +99,7 @@ class StripeWebhookController extends Controller
             ]);
         });
 
+        $this->m2Booking->markSeatAsSold($orden->reservation_id);
         $this->m4Ticket->notifyPaymentConfirmed([
             'paymentId' => $transaccion->id,
             'orderId' => $orden->id,

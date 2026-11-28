@@ -4,13 +4,13 @@ namespace App\Services\Crypto;
 
 use Exception;
 use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
 
 class EcdhSessionService
 {
     private const HKDF_INFO = 'm3-payment-session-v1';
-    private const SESSION_TTL_SECONDS = 300; // 5 minutos
-
+    private const SESSION_TTL_SECONDS = 300;
 
     public function createSession(string $buyerId, string $reservationId): array
     {
@@ -30,12 +30,11 @@ class EcdhSessionService
         }
 
         if (!openssl_pkey_export($res, $privateKeyPem, null, $config)) {
-            throw new Exception('Error al exportar la llave privada efímera.');
+            throw new Exception('Error al exportar la llave privada efimera.');
         }
 
         $details = openssl_pkey_get_details($res);
         $publicKeyPem = $details['key'];
-
         $publicKeySpkiBase64 = $this->pemToSpkiBase64($publicKeyPem);
 
         $sessionId = 'ecdh_' . Str::ulid();
@@ -48,6 +47,18 @@ class EcdhSessionService
             'reservation_id' => $reservationId,
         ], now()->addSeconds(self::SESSION_TTL_SECONDS));
 
+        Log::channel('crypto_tunnel')->info(
+            "\n+----------------------------------------------------------------------+\n" .
+            "| FASE 1: HANDSHAKE ECDH P-256 (SERVIDOR LARAVEL)                      |\n" .
+            "+----------------------------------------------------------------------+\n" .
+            "  ID de Sesion       : {$sessionId}\n" .
+            "  Comprador / Reserva: {$buyerId} | {$reservationId}\n" .
+            "  Llave Publica PubS : " . substr($publicKeySpkiBase64, 0, 44) . "...\n" .
+            "  Salt Aleatorio 32B : {$saltBase64}\n" .
+            "  Llave Privada PrivS: Guardada temporalmente en memoria (TTL 300s)\n" .
+            "+----------------------------------------------------------------------+"
+        );
+
         return [
             'sessionId' => $sessionId,
             'serverPublicKey' => $publicKeySpkiBase64,
@@ -57,7 +68,6 @@ class EcdhSessionService
             'expiresIn' => self::SESSION_TTL_SECONDS,
         ];
     }
-
 
     public function decryptOrderMetadata(
         string $sessionId,
@@ -69,11 +79,11 @@ class EcdhSessionService
         $session = Cache::get($this->cacheKey($sessionId));
 
         if (!$session) {
-            throw new Exception('La sesión criptográfica ECDH no existe o ya expiró.');
+            throw new Exception('La sesion criptografica ECDH no existe o ya expiro.');
         }
 
         if ($session['buyer_id'] !== $expectedBuyerId) {
-            throw new Exception('La sesión criptográfica no pertenece al comprador autenticado.');
+            throw new Exception('La sesion criptografica no pertenece al comprador autenticado.');
         }
 
         $this->destroySession($sessionId);
@@ -83,7 +93,7 @@ class EcdhSessionService
         $clientPublicKey = openssl_pkey_get_public($clientPublicKeyPem);
 
         if ($serverPrivateKey === false || $clientPublicKey === false) {
-            throw new Exception('Llaves ECDH inválidas para derivación.');
+            throw new Exception('Llaves ECDH invalidas para derivacion.');
         }
 
         $sharedSecret = openssl_pkey_derive($clientPublicKey, $serverPrivateKey, 32);
@@ -98,7 +108,7 @@ class EcdhSessionService
         $combined = base64_decode($ciphertextBase64, true);
 
         if ($iv === false || strlen($iv) !== 12 || $combined === false || strlen($combined) <= 16) {
-            throw new Exception('Formato de IV o texto cifrado AES-GCM inválido.');
+            throw new Exception('Formato de IV o texto cifrado AES-GCM invalido.');
         }
 
         $tag = substr($combined, -16);
@@ -114,13 +124,32 @@ class EcdhSessionService
         );
 
         if ($plaintext === false) {
-            throw new Exception('Fallo de autenticación AES-256-GCM: payload alterado o llave incorrecta.');
+            Log::channel('crypto_tunnel')->error("[ALERTA AES-256-GCM] Fallo de integridad (Auth Tag invalido) en sesion {$sessionId}");
+            throw new Exception('Fallo de autenticacion AES-256-GCM: payload alterado o llave incorrecta.');
         }
 
         $decoded = json_decode($plaintext, true);
         if (!is_array($decoded)) {
-            throw new Exception('El payload descifrado no contiene un JSON válido.');
+            throw new Exception('El payload descifrado no contiene un JSON valido.');
         }
+
+        Log::channel('crypto_tunnel')->info(
+            "\n+----------------------------------------------------------------------+\n" .
+            "| FASE 2: DATOS CIFRADOS RECIBIDOS DEL NAVEGADOR (WEB CRYPTO API)      |\n" .
+            "+----------------------------------------------------------------------+\n" .
+            "  Llave Publica PubC : " . substr($clientPublicKeySpkiBase64, 0, 44) . "...\n" .
+            "  Vector Inicial (IV): {$ivBase64} (12 bytes)\n" .
+            "  Etiqueta Auth Tag  : " . base64_encode($tag) . " (16 bytes)\n" .
+            "  Texto Cifrado      : " . substr($ciphertextBase64, 0, 44) . "...\n" .
+            "+----------------------------------------------------------------------+\n" .
+            "| FASE 3: DERIVACION HKDF Y DESCIFRADO AES-256-GCM (SERVIDOR LARAVEL)  |\n" .
+            "+----------------------------------------------------------------------+\n" .
+            "  Llave AES-256 HKDF : " . substr(bin2hex($aesKey), 0, 32) . "... (32 bytes)\n" .
+            "  Integridad GCM     : VERIFICADA OK (Sin alteraciones en transito)\n" .
+            "  Metadatos Planos   : {$plaintext}\n" .
+            "  Seguridad PFS      : Llave privada efimera PrivS DESTRUIDA de memoria\n" .
+            "+----------------------------------------------------------------------+"
+        );
 
         return [
             'metadata' => $decoded,

@@ -7,6 +7,8 @@ document.addEventListener('DOMContentLoaded', () => {
     const statusBox = document.getElementById('status-message');
 
     let ecdhSession = null;
+    let activeReservationId = null;
+    let countdownInterval = null;
     let stripe = null;
     let elements = null;
 
@@ -47,8 +49,111 @@ document.addEventListener('DOMContentLoaded', () => {
         }).format(amountMinor / 100);
     }
 
+    function isValidLuhn(cardNumber) {
+        let sum = 0;
+        let shouldDouble = false;
+        for (let i = cardNumber.length - 1; i >= 0; i--) {
+            let digit = parseInt(cardNumber.charAt(i), 10);
+            if (shouldDouble) {
+                digit *= 2;
+                if (digit > 9) digit -= 9;
+            }
+            sum += digit;
+            shouldDouble = !shouldDouble;
+        }
+        return sum % 10 === 0;
+    }
+
+    function startCountdown(remainingSeconds) {
+        const timerEl = document.getElementById('countdown-timer');
+        let secondsLeft = Number(remainingSeconds) || 0;
+
+        if (countdownInterval) clearInterval(countdownInterval);
+
+        const render = () => {
+            const mins = String(Math.floor(secondsLeft / 60)).padStart(2, '0');
+            const secs = String(secondsLeft % 60).padStart(2, '0');
+            timerEl.textContent = `${mins}:${secs}`;
+        };
+
+        render();
+
+        countdownInterval = setInterval(async () => {
+            secondsLeft--;
+            if (secondsLeft <= 0) {
+                clearInterval(countdownInterval);
+                timerEl.textContent = '00:00 (Expirado)';
+                document.getElementById('lock-status').textContent = 'Liberado por tiempo';
+                btnInit.disabled = true;
+                btnConfirm.disabled = true;
+                showMessage('El tiempo de retencion termino. El asiento fue liberado automaticamente.', 'error');
+
+                if (activeReservationId) {
+                    await fetch(`${config.apiBase}/asientos/expirar`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
+                        body: JSON.stringify({ reservationId: activeReservationId }),
+                    });
+                }
+                return;
+            }
+            render();
+        }, 1000);
+    }
+
+    document.getElementById('btn-check-bin')?.addEventListener('click', async () => {
+        const raw = document.getElementById('bin-input').value.replace(/\D/g, '');
+        const resultEl = document.getElementById('bin-result');
+
+        if (raw.length < 15 || raw.length > 16) {
+            resultEl.textContent = 'Ingresa el numero completo de la tarjeta (15 o 16 digitos).';
+            return;
+        }
+
+        if (!isValidLuhn(raw)) {
+            resultEl.innerHTML = '❌ <strong>Numero de tarjeta invalido</strong> (no pasa la verificacion matematica Luhn).';
+            return;
+        }
+
+        const bin6 = raw.substring(0, 6);
+        const last4 = raw.substring(raw.length - 4);
+        resultEl.textContent = `Luhn valido (**** ${last4}). Consultando banco emisor para BIN ${bin6}...`;
+
+        try {
+            const res = await fetch(`${config.apiBase}/bin/${encodeURIComponent(bin6)}`);
+            const json = await res.json();
+            if (!res.ok) throw new Error(json.message || 'BIN no encontrado');
+            const d = json.data;
+            resultEl.innerHTML =
+                `✅ <strong>Tarjeta válida (**** ${last4})</strong><br>` +
+                `🏦 Banco: <strong>${d.bank}</strong><br>` +
+                `💳 Red / Tipo: <strong>${d.scheme} · ${d.type} (${d.tier || 'ESTÁNDAR'})</strong> · 🌍 País: <strong>${d.country}</strong>`;
+        } catch (err) {
+            resultEl.innerHTML = `⚠️ Luhn valido (**** ${last4}), pero: ${err.message}`;
+        }
+    });
+
     async function initEcdhSession() {
         try {
+            const lockRes = await fetch(`${config.apiBase}/asientos/reservar`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Accept': 'application/json',
+                    'Authorization': 'Bearer mock_jwt_token_buyer',
+                },
+                body: JSON.stringify({ seatId: config.seatId }),
+            });
+
+            const lockData = await lockRes.json();
+            if (!lockRes.ok || lockData.status !== 'ok') {
+                throw new Error(lockData.message || 'El asiento no esta disponible.');
+            }
+
+            activeReservationId = lockData.reservation.reservationId;
+            document.getElementById('reservation-id').textContent = activeReservationId;
+            startCountdown(lockData.reservation.remainingSeconds);
+
             const response = await fetch(`${config.apiBase}/sesion`, {
                 method: 'POST',
                 headers: {
@@ -56,18 +161,15 @@ document.addEventListener('DOMContentLoaded', () => {
                     'Accept': 'application/json',
                     'Authorization': 'Bearer mock_jwt_token_buyer',
                 },
-                body: JSON.stringify({
-                    reservationId: config.reservationId,
-                }),
+                body: JSON.stringify({ reservationId: activeReservationId }),
             });
 
             const data = await response.json();
             if (!response.ok || data.status !== 'ok') {
-                throw new Error(data.message || 'No se pudo iniciar la sesión ECDH.');
+                throw new Error(data.message || 'No se pudo iniciar la sesion ECDH.');
             }
 
             ecdhSession = data.session;
-
             const summary = data.reservationSummary;
             document.getElementById('event-name').textContent = summary.eventName;
             document.getElementById('event-venue').textContent = summary.venue;
@@ -81,7 +183,8 @@ document.addEventListener('DOMContentLoaded', () => {
             setStepState('step-ecdh', 'done');
         } catch (err) {
             setStepState('step-ecdh', 'error');
-            showMessage(`Error en handshake ECDH: ${err.message}`, 'error');
+            document.getElementById('lock-status').textContent = 'No disponible';
+            showMessage(err.message, 'error');
             btnInit.disabled = true;
         }
     }
@@ -155,13 +258,18 @@ document.addEventListener('DOMContentLoaded', () => {
 
         btnInit.disabled = true;
         btnInit.textContent = 'Cifrando con AES-256-GCM...';
-        showMessage('Derivando llave efímera y cifrando metadatos de la orden...', 'info');
+        showMessage('Derivando llave efimera y cifrando metadatos de la orden...', 'info');
 
         try {
+            const buyerName = document.getElementById('buyer-name').value.trim();
+            const buyerPhone = document.getElementById('buyer-phone').value.trim();
             const buyerEmail = document.getElementById('buyer-email').value.trim();
+
             const encrypted = await encryptMetadata({
+                buyerName,
+                buyerPhone,
                 buyerEmail,
-                reservationId: config.reservationId,
+                reservationId: activeReservationId,
                 clientTimestamp: new Date().toISOString(),
             });
 
@@ -187,10 +295,6 @@ document.addEventListener('DOMContentLoaded', () => {
                 throw new Error(data.message || 'Error al crear el intento de pago.');
             }
 
-            if (!config.stripeKey || config.stripeKey.includes('aqui_tu_llave')) {
-                throw new Error('Configura STRIPE_KEY (pk_test_...) en tu archivo .env.');
-            }
-
             stripe = Stripe(config.stripeKey);
             elements = stripe.elements({
                 clientSecret: data.clientSecret,
@@ -205,7 +309,11 @@ document.addEventListener('DOMContentLoaded', () => {
                 },
             });
 
-            const paymentElement = elements.create('payment');
+            const paymentElement = elements.create('payment', {
+                wallets: {
+                    link: 'never',
+                },
+            });
             paymentElement.mount('#payment-element');
 
             metadataForm.classList.add('hidden');
@@ -238,8 +346,10 @@ document.addEventListener('DOMContentLoaded', () => {
             btnConfirm.disabled = false;
             btnConfirm.textContent = 'Pagar ahora';
         } else if (paymentIntent && paymentIntent.status === 'succeeded') {
+            if (countdownInterval) clearInterval(countdownInterval);
+            document.getElementById('lock-status').textContent = 'Pagado';
             showMessage(
-                `¡Pago aprobado en Stripe! (${paymentIntent.id}). El Webhook confirmará tu orden.`,
+                `Pago aprobado en Stripe (${paymentIntent.id}). El Webhook confirmara tu orden y disparara la emision del boleto al Modulo 4.`,
                 'success'
             );
             btnConfirm.textContent = 'Pago completado';
